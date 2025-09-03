@@ -1,0 +1,278 @@
+import java.io.*;
+import java.util.*;
+import java.math.BigInteger;
+
+// Simple JSON parser for our specific format
+class SimpleJSONParser {
+    private Map<String, Object> data;
+    
+    public SimpleJSONParser(String json) {
+        this.data = new HashMap<>();
+        parseJSON(json.trim());
+    }
+    
+    private void parseJSON(String json) {
+        // Remove outer braces and whitespace
+        json = json.substring(1, json.length() - 1).trim();
+        
+        // Split by main sections
+        String[] sections = splitMainSections(json);
+        
+        for (String section : sections) {
+            section = section.trim();
+            if (section.contains("\"keys\"")) {
+                // Parse keys section
+                parseKeysSection(section);
+            } else if (section.startsWith("\"") && section.contains("\":")) {
+                // Parse numbered sections
+                parseNumberedSection(section);
+            }
+        }
+    }
+    
+    private String[] splitMainSections(String json) {
+        List<String> sections = new ArrayList<>();
+        int start = 0;
+        int braceCount = 0;
+        boolean inQuotes = false;
+        
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            
+            if (c == '"' && (i == 0 || json.charAt(i-1) != '\\')) {
+                inQuotes = !inQuotes;
+            } else if (!inQuotes) {
+                if (c == '{') braceCount++;
+                else if (c == '}') braceCount--;
+                else if (c == ',' && braceCount == 0) {
+                    sections.add(json.substring(start, i).trim());
+                    start = i + 1;
+                }
+            }
+        }
+        sections.add(json.substring(start).trim());
+        return sections.toArray(new String[0]);
+    }
+    
+    private void parseKeysSection(String section) {
+        // Extract n and k from: "keys": { "n": 4, "k": 3 }
+        int nStart = section.indexOf("\"n\":");
+        if (nStart != -1) {
+            int nEnd = section.indexOf(",", nStart);
+            if (nEnd == -1) nEnd = section.indexOf("}", nStart);
+            String nValue = section.substring(nStart + 4, nEnd).trim();
+            data.put("n", Integer.parseInt(nValue));
+        }
+        
+        int kStart = section.indexOf("\"k\":");
+        if (kStart != -1) {
+            int kEnd = section.indexOf("}", kStart);
+            String kValue = section.substring(kStart + 4, kEnd).trim();
+            data.put("k", Integer.parseInt(kValue));
+        }
+    }
+    
+    private void parseNumberedSection(String section) {
+        try {
+            // Extract number, base, and value from: "1": { "base": "10", "value": "4" }
+            int colonIndex = section.indexOf(":");
+            String key = section.substring(0, colonIndex).trim().replaceAll("\"", "");
+            
+            // Find the content within braces
+            int braceStart = section.indexOf("{");
+            int braceEnd = section.lastIndexOf("}");
+            String content = section.substring(braceStart + 1, braceEnd);
+            
+            // Parse base
+            int baseStart = content.indexOf("\"base\":");
+            int baseEnd = content.indexOf(",", baseStart);
+            if (baseEnd == -1) baseEnd = content.indexOf("}", baseStart);
+            String baseStr = content.substring(baseStart + 7, baseEnd).trim().replaceAll("\"", "");
+            int base = Integer.parseInt(baseStr);
+            
+            // Parse value
+            int valueStart = content.indexOf("\"value\":");
+            int valueEnd = content.indexOf("\"", valueStart + 9);
+            if (valueEnd == -1) valueEnd = content.length();
+            String value = content.substring(valueStart + 8, valueEnd).trim().replaceAll("\"", "");
+            
+            Map<String, Object> pointData = new HashMap<>();
+            pointData.put("base", base);
+            pointData.put("value", value);
+            
+            data.put(key, pointData);
+        } catch (Exception e) {
+            System.err.println("Error parsing section: " + section);
+            e.printStackTrace();
+        }
+    }
+    
+    public int getN() {
+        Integer n = (Integer) data.get("n");
+        return n != null ? n : 0;
+    }
+    
+    public int getK() {
+        Integer k = (Integer) data.get("k");
+        return k != null ? k : 0;
+    }
+    
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getPoint(String key) {
+        return (Map<String, Object>) data.get(key);
+    }
+    
+    public Set<String> getPointKeys() {
+        Set<String> keys = new HashSet<>(data.keySet());
+        keys.remove("n");
+        keys.remove("k");
+        return keys;
+    }
+}
+
+public class QuadSolver {
+    
+    public static void main(String[] args) {
+        try {
+            String jsonContent;
+            
+            // Read JSON file - FIXED for older Java versions
+            if (args.length > 0) {
+                jsonContent = readFileContent(args[0]);
+            } else {
+                jsonContent = readFileContent("test1.json");
+            }
+            
+            // Solve and print result
+            BigInteger result = findSecret(jsonContent);
+            System.out.println(result);
+            
+        } catch (IOException e) {
+            System.err.println("Error reading file: " + e.getMessage());
+            System.err.println("Usage: java ShamirSecretSharing [filename.json]");
+            System.exit(1);
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+    
+    // FIXED: Compatible file reading method for all Java versions
+    private static String readFileContent(String filename) throws IOException {
+        File file = new File(filename);
+        if (!file.exists()) {
+            throw new IOException("File not found: " + filename);
+        }
+        
+        StringBuilder content = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                content.append(line).append("\n");
+            }
+        }
+        return content.toString();
+    }
+    
+    public static BigInteger findSecret(String jsonInput) throws Exception {
+        SimpleJSONParser parser = new SimpleJSONParser(jsonInput);
+        
+        int n = parser.getN();
+        int k = parser.getK();
+        
+        System.err.println("n = " + n + ", k = " + k); // Debug info
+        
+        // Get all point keys and sort them numerically
+        Set<String> pointKeys = parser.getPointKeys();
+        List<Integer> sortedKeys = new ArrayList<>();
+        for (String key : pointKeys) {
+            try {
+                sortedKeys.add(Integer.parseInt(key));
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid key: " + key);
+            }
+        }
+        Collections.sort(sortedKeys);
+        
+        // Take first k points for interpolation
+        List<String> selectedKeys = new ArrayList<>();
+        for (int i = 0; i < Math.min(k, sortedKeys.size()); i++) {
+            selectedKeys.add(String.valueOf(sortedKeys.get(i)));
+        }
+        
+        // Convert points to (x, y) pairs
+        List<Point> points = new ArrayList<>();
+        for (String key : selectedKeys) {
+            Map<String, Object> pointData = parser.getPoint(key);
+            if (pointData == null) {
+                System.err.println("No data for key: " + key);
+                continue;
+            }
+            
+            Integer baseObj = (Integer) pointData.get("base");
+            String value = (String) pointData.get("value");
+            
+            if (baseObj == null || value == null) {
+                System.err.println("Invalid point data for key: " + key);
+                continue;
+            }
+            
+            int base = baseObj;
+            
+            BigInteger x = new BigInteger(key);
+            BigInteger y = new BigInteger(value, base);
+            
+            points.add(new Point(x, y));
+            System.err.println("Point: x=" + x + ", y=" + y); // Debug info
+        }
+        
+        if (points.size() < k) {
+            throw new RuntimeException("Not enough valid points for interpolation. Need " + k + ", got " + points.size());
+        }
+        
+        // Use Lagrange interpolation to find f(0) - the secret
+        return lagrangeInterpolation(points, BigInteger.ZERO);
+    }
+    
+    // Lagrange interpolation to find f(x)
+    public static BigInteger lagrangeInterpolation(List<Point> points, BigInteger x) {
+        BigInteger result = BigInteger.ZERO;
+        
+        for (int i = 0; i < points.size(); i++) {
+            BigInteger yi = points.get(i).y;
+            BigInteger li = BigInteger.ONE;
+            
+            for (int j = 0; j < points.size(); j++) {
+                if (i != j) {
+                    BigInteger xi = points.get(i).x;
+                    BigInteger xj = points.get(j).x;
+                    
+                    // li = li * (x - xj) / (xi - xj)
+                    BigInteger numerator = x.subtract(xj);
+                    BigInteger denominator = xi.subtract(xj);
+                    
+                    li = li.multiply(numerator).divide(denominator);
+                }
+            }
+            
+            result = result.add(yi.multiply(li));
+        }
+        
+        return result;
+    }
+    
+    static class Point {
+        BigInteger x, y;
+        
+        Point(BigInteger x, BigInteger y) {
+            this.x = x;
+            this.y = y;
+        }
+        
+        @Override
+        public String toString() {
+            return "(" + x + ", " + y + ")";
+        }
+    }
+}
